@@ -1,142 +1,121 @@
---// Chiriku Auto Hop Boss
+--// CONFIG
+getgenv().Mode = getgenv().Mode or "rip_indra" -- rip_indra, Dough King, TOTS, Soul Reaper, Darkbeard
+getgenv().Team = getgenv().Team or "Marines"
 
--- Cấu hình ban đầu
-getgenv().Mode = "TOTS" -- "rip_indra", "Dough King", "TOTS", "Soul Reaper", "Darkbeard"
-getgenv().Team = "Marines"
+--// SERVICES
+local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+local tpData = game:GetService("TeleportService"):GetLocalPlayerTeleportData()
+local lp = Players.LocalPlayer
+local hopCooldown, lastHop = 10, 0
+local visited = {}
 
-repeat task.wait() until game:IsLoaded() and game.Players and game.Players.LocalPlayer and game.Players.LocalPlayer:FindFirstChild("PlayerGui")
-
--- Cấu hình boss và các tính năng cần thiết
-local BossName = tostring(getgenv().Mode or "")
-local AllowedBosses = {
+--// BOSS MAP
+local BossMap = {
+    ["TOTS"] = "Tyrant Of The Skies",
     ["rip_indra"] = "rip_indra",
     ["Dough King"] = "Dough King",
-    ["TOTS"] = "Tyrant Of The Skies", -- "TOTS" giờ là "Tyrant Of The Skies"
     ["Soul Reaper"] = "Soul Reaper",
     ["Darkbeard"] = "Darkbeard"
 }
+local BossName = BossMap[getgenv().Mode]
 
-if not AllowedBosses[BossName] then
-    warn("Sai tên boss! Phải là: rip_indra, Dough King, TOTS, Soul Reaper, Darkbeard")
-    return
-end
-
-local TeamName = getgenv().Team or "Marines"
-local Players = game:GetService("Players")
-local TeleportService = game:GetService("TeleportService")
-local HttpService = game:GetService("HttpService")
-local UsedServer = {}
-
--- Auto team
+--// AUTO TEAM
 pcall(function()
-    if Players.LocalPlayer.Team == nil then
-        repeat
-            task.wait(0.5)
-            for i,v in pairs(Players.LocalPlayer.PlayerGui:GetChildren()) do
-                if v:FindFirstChild("Team") then
-                    for _,b in pairs(v.Team:GetChildren()) do
-                        if b.Name == TeamName then
-                            firetouchinterest(Players.LocalPlayer.Character.HumanoidRootPart, b, 0)
-                            firetouchinterest(Players.LocalPlayer.Character.HumanoidRootPart, b, 1)
-                        end
-                    end
-                end
+    if lp.Team == nil or lp.Team.Name ~= getgenv().Team then
+        for _,v in pairs(game:GetService("Teams"):GetChildren()) do
+            if v.Name == getgenv().Team then
+                lp.Team = v
+                lp:LoadCharacter()
             end
-        until Players.LocalPlayer.Team and Players.LocalPlayer.Team.Name == TeamName
+        end
     end
 end)
 
--- Anti AFK
-pcall(function()
-    local vu = game:GetService("VirtualUser")
-    Players.LocalPlayer.Idled:Connect(function()
-        vu:Button2Down(Vector2.new(0,0),workspace.CurrentCamera.CFrame)
-        task.wait(1)
-        vu:Button2Up(Vector2.new(0,0),workspace.CurrentCamera.CFrame)
-    end)
-end)
-
--- Fast Attack
-local function FastAttack()
-    pcall(function()
-        local plr = Players.LocalPlayer
-        local Combat = require(plr.PlayerScripts.CombatFramework)
-        local CombatFramework = debug.getupvalues(Combat)
-        local CF = CombatFramework[2]
-        local rig = CF.activeController
-        if rig and rig.equipped then
-            rig.timeToNextAttack = 0
-            rig.humanoid.AutoRotate = false
-            rig:attack()
+--// HOP FUNCTION
+function ServerHop()
+    local servers = {}
+    local req = game:HttpGet("https://games.roblox.com/v1/games/2753915549/servers/Public?limit=100")
+    for _,v in pairs(HttpService:JSONDecode(req).data) do
+        if type(v) == "table" and v.playing < v.maxPlayers and not visited[v.id] then
+            table.insert(servers, v.id)
         end
-    end)
+    end
+    if #servers > 0 then
+        visited[servers[1]] = true
+        TeleportService:TeleportToPlaceInstance(2753915549, servers[1], lp)
+    end
 end
 
--- Tween tới boss
-local function TweenTo(pos)
-    local hrp = Players.LocalPlayer.Character:WaitForChild("HumanoidRootPart")
-    local ts = game:GetService("TweenService")
-    local info = TweenInfo.new((hrp.Position - pos).Magnitude / 350, Enum.EasingStyle.Linear)
-    local tween = ts:Create(hrp, info, {CFrame = CFrame.new(pos)})
-    tween:Play()
-    tween.Completed:Wait()
-end
-
--- Tìm boss chính xác tên
-local function FindExactBoss()
-    for _,v in pairs(workspace.Enemies:GetChildren()) do
-        if v.Name == AllowedBosses[BossName] and v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0 then
+--// CHECK BOSS EXIST
+function GetBoss()
+    for _,v in pairs(workspace:GetDescendants()) do
+        if v:IsA("Model") and v:FindFirstChild("HumanoidRootPart") and v.Name == BossName then
             return v
         end
     end
-    return nil
 end
 
--- Đánh boss
-local function KillBoss(boss)
-    repeat task.wait()
-        if boss and boss:FindFirstChild("HumanoidRootPart") and boss.Humanoid.Health > 0 then
-            TweenTo(boss.HumanoidRootPart.Position + Vector3.new(0,20,0))
-            FastAttack()
-        end
-    until not boss or boss.Humanoid.Health <= 0 or not boss:FindFirstChild("Humanoid")
-end
-
--- Smart Hop
-local function HopServer()
-    local cursor = ""
-    while true do
-        local url = "https://games.roblox.com/v1/games/"..game.PlaceId.."/servers/Public?limit=100"..(cursor ~= "" and "&cursor="..cursor or "")
-        local success, result = pcall(function() return HttpService:JSONDecode(game:HttpGet(url)) end)
-        if success then
-            for _, server in pairs(result.data) do
-                if server.playing < server.maxPlayers and not UsedServer[server.id] then
-                    UsedServer[server.id] = true
-                    TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id)
-                    return
+--// AUTO BUSO + AUTO RACE
+spawn(function()
+    while task.wait(1) do
+        pcall(function()
+            if lp.Character then
+                -- Buso
+                if not lp.Character:FindFirstChild("HasBuso") and lp.Backpack:FindFirstChild("Buso") then
+                    lp.Backpack.Buso:Activate()
+                end
+                -- Race skill
+                for _,v in pairs({"Transform", "AwakeningSkill"}) do
+                    local skill = lp.Backpack:FindFirstChild(v) or lp.Character:FindFirstChild(v)
+                    if skill then skill:Activate() end
                 end
             end
-            if result.nextPageCursor then
-                cursor = result.nextPageCursor
-            else
-                break
+        end)
+    end
+end)
+
+--// FAST ATTACK
+spawn(function()
+    local Vim = game:GetService("VirtualInputManager")
+    while task.wait(0.1) do
+        pcall(function()
+            local char = lp.Character
+            if not char then return end
+            local tool = char:FindFirstChildOfClass("Tool")
+            if tool and GetBoss() then
+                Vim:SendMouseButton1Down()
+                task.wait(0.05)
+                Vim:SendMouseButton1Up()
             end
-        else
-            break
+        end)
+    end
+end)
+
+--// ATTACK BOSS
+spawn(function()
+    while task.wait() do
+        pcall(function()
+            local boss = GetBoss()
+            if boss and boss:FindFirstChild("Humanoid") and boss:FindFirstChild("HumanoidRootPart") then
+                local char = lp.Character
+                if char and char:FindFirstChild("HumanoidRootPart") then
+                    char.HumanoidRootPart.CFrame = boss.HumanoidRootPart.CFrame * CFrame.new(0, 10, 0)
+                end
+            end
+        end)
+    end
+end)
+
+--// MAIN LOOP
+spawn(function()
+    while task.wait(5) do
+        local boss = GetBoss()
+        if not boss and tick() - lastHop > hopCooldown then
+            lastHop = tick()
+            ServerHop()
         end
     end
-end
-
--- Main Loop
-while true do
-    task.wait(2)
-    local boss = FindExactBoss()
-    if boss then
-        warn("Boss Found: "..boss.Name)
-        KillBoss(boss)
-    else
-        warn("Boss not found, hopping...")
-        HopServer()
-        task.wait(7)
-    end
-end
+end)
